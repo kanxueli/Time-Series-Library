@@ -114,7 +114,7 @@ if __name__ == '__main__':
                         help='the controller of using dtw metric (dtw is time consuming, not suggested unless necessary)')
 
     # Augmentation
-    parser.add_argument('--augmentation_ratio', type=int, default=0, help="How many times to augment")
+    parser.add_argument('--augmentation_ratio', type=int, default=0.8, help="How many times to augment")
     parser.add_argument('--seed', type=int, default=2, help="Randomization seed")
     parser.add_argument('--jitter', default=False, action="store_true", help="Jitter preset augmentation")
     parser.add_argument('--scaling', default=False, action="store_true", help="Scaling preset augmentation")

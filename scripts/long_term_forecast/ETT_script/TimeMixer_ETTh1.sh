@@ -1,5 +1,3 @@
-export CUDA_VISIBLE_DEVICES=0
-
 model_name=TimeMixer
 
 seq_len=96
@@ -12,11 +10,12 @@ d_ff=32
 train_epochs=10
 patience=10
 batch_size=16
+device_index=4
 
-python -u run.py \
+CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path  ./dataset/ETT-small/\
+  --root_path  /home/likx/time_series_forecasting/typical_datasets/ETT-small/\
   --data_path ETTh1.csv \
   --model_id ETTh1_$seq_len'_'96 \
   --model $model_name \
@@ -41,10 +40,10 @@ python -u run.py \
   --down_sampling_window $down_sampling_window
 
 
-python -u run.py \
+CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./dataset/ETT-small/ \
+  --root_path /home/likx/time_series_forecasting/typical_datasets/ETT-small/ \
   --data_path ETTh1.csv \
   --model_id ETTh1_$seq_len'_'192 \
   --model $model_name \
@@ -69,10 +68,10 @@ python -u run.py \
   --down_sampling_window $down_sampling_window
 
 
-python -u run.py \
+CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./dataset/ETT-small/ \
+  --root_path /home/likx/time_series_forecasting/typical_datasets/ETT-small/ \
   --data_path ETTh1.csv \
   --model_id ETTh1_$seq_len'_'336 \
   --model $model_name \
@@ -97,10 +96,10 @@ python -u run.py \
   --down_sampling_window $down_sampling_window
 
 
-python -u run.py \
+CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./dataset/ETT-small/ \
+  --root_path /home/likx/time_series_forecasting/typical_datasets/ETT-small/ \
   --data_path ETTh1.csv \
   --model_id ETTh1_$seq_len'_'720 \
   --model $model_name \

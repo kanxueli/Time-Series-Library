@@ -752,7 +752,7 @@ class UEAloader(Dataset):
 class VitalDBLoader(Dataset):
     def __init__(self, args, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='Solar8000/ART_MBP', scale=False, timeenc=0, freq='h',
+                 target='Solar8000/ART_MBP', scale=True, timeenc=0, freq='h',
                  seasonal_patterns=None, sample_step=5):
         # size [seq_len, label_len, pred_len]
         self.args = args
@@ -823,47 +823,64 @@ class VitalDBLoader(Dataset):
         if self.flag == 'train' and self.args.augmentation_ratio > 0:
             self.__augment_data__()
             
-        # 为每个特征创建一个scaler
-        self.scalers = {feature: StandardScaler() for feature in self.time_series_features}
-        
         # 归一化处理
         if self.scale:
+            # 将所有数据转换为numpy数组
+            all_data = []
+            for caseid, data in self.case_data.items():
+                data_array = np.array([data[feature] for feature in self.time_series_features]).T
+                all_data.append(data_array)
+            all_data = np.vstack(all_data)  # (total_length, features)
+            
+            # 根据features参数选择数据
+            if self.features == 'S':  # 单变量模式
+                target_idx = self.time_series_features.index(self.target)
+                data = all_data[:, target_idx:target_idx+1]  # (total_length, 1)
+            else:  # 多变量模式
+                data = all_data  # (total_length, features)
+            
+            # 创建单个scaler
+            self.scaler = StandardScaler()
+            
             # 如果是训练集，拟合scaler
             if self.set_type == 0:  # train
-                for feature in self.time_series_features:
-                    train_data = []
-                    for caseid, data in self.case_data.items():
-                        if feature in data:
-                            train_data.extend(data[feature])
-                    train_data = np.array(train_data).reshape(-1, 1)
-                    self.scalers[feature].fit(train_data)
+                self.scaler.fit(data)
             else:
                 # 对于验证集和测试集，需要从训练集获取scaler
                 train_file_path = os.path.join(self.root_path, 'train.jsonl')
+                train_data = []
                 with open(train_file_path, 'r') as f:
-                    train_data = {feature: [] for feature in self.time_series_features}
                     for line in f:
                         try:
                             record = json.loads(line)
+                            case_data = {}
                             for feature in self.time_series_features:
                                 if feature in record:
-                                    train_data[feature].extend(record[feature])
+                                    case_data[feature] = record[feature]
+                            if case_data:
+                                data_array = np.array([case_data[feature] for feature in self.time_series_features]).T
+                                train_data.append(data_array)
                         except:
                             continue
-                
-                # 拟合scaler
-                for feature in self.time_series_features:
-                    if train_data[feature]:
-                        train_data_array = np.array(train_data[feature]).reshape(-1, 1)
-                        self.scalers[feature].fit(train_data_array)
+                train_data = np.vstack(train_data)
+                if self.features == 'S':
+                    target_idx = self.time_series_features.index(self.target)
+                    train_data = train_data[:, target_idx:target_idx+1]
+                self.scaler.fit(train_data)
             
             # 对所有数据进行归一化
-            for caseid, data in self.case_data.items():
-                for feature in self.time_series_features:
-                    if feature in data:
-                        data[feature] = self.scalers[feature].transform(
-                            np.array(data[feature]).reshape(-1, 1)
-                        ).flatten()
+            data = self.scaler.transform(data)
+            
+            # 将归一化后的数据存回case_data
+            start_idx = 0
+            for caseid, case_data in self.case_data.items():
+                length = len(case_data[self.time_series_features[0]])
+                if self.features == 'S':
+                    case_data[self.target] = data[start_idx:start_idx+length, 0]
+                else:
+                    for i, feature in enumerate(self.time_series_features):
+                        case_data[feature] = data[start_idx:start_idx+length, i]
+                start_idx += length
 
     def __precompute_samples__(self):
         """预生成所有有效样本"""
@@ -1072,13 +1089,6 @@ class VitalDBLoader(Dataset):
         seq_x_mark = self._generate_time_features(x_context)
         seq_y_mark = self._generate_time_features(x_future)
 
-        # Debug information
-        # print(f"Debug - features: {self.features}")
-        # print(f"Debug - x_context shape: {x_context.shape}")
-        # print(f"Debug - x_future shape: {x_future.shape}")
-        # print(f"Debug - seq_x_mark shape: {seq_x_mark.shape}")
-        # print(f"Debug - seq_y_mark shape: {seq_y_mark.shape}")
-
         return x_context, x_future, seq_x_mark, seq_y_mark
 
     def _generate_time_features(self, data):
@@ -1105,17 +1115,7 @@ class VitalDBLoader(Dataset):
 
     def inverse_transform(self, data):
         """逆归一化"""
-        if self.features == 'S':  # 单变量模式
-            return self.scalers['Solar8000/ART_MBP'].inverse_transform(data)
-        else:  # 多变量模式
-            # 检查数据维度
-            if data.shape[1] == 1:  # 如果数据只有1列，按单变量处理
-                return self.scalers['Solar8000/ART_MBP'].inverse_transform(data)
-            else:  # 多变量处理
-                result = np.zeros_like(data)
-                for i, feature in enumerate(self.time_series_features):
-                    result[:, i] = self.scalers[feature].inverse_transform(data[:, i].reshape(-1, 1)).flatten()
-                return result
+        return self.scaler.inverse_transform(data)
 
     def _get_train_scaler(self):
-        return self.scalers
+        return self.scaler

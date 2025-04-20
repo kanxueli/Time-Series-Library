@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
+import json
+import utils.run_metrics as run_metrics
 
 warnings.filterwarnings('ignore')
 
@@ -102,15 +104,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
                 iter_count += 1
                 model_optim.zero_grad()
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
-                batch_x_mark = batch_x_mark.float().to(self.device)
-                batch_y_mark = batch_y_mark.float().to(self.device)
-
-                # decoder input
+                batch_x = batch_x.float().to(self.device) # (batch_size, seq_len, features)
+                batch_y = batch_y.float().to(self.device) # (batch_size, pred_len, features)
+                batch_x_mark = batch_x_mark.float().to(self.device) # (batch_size, seq_len, 4)
+                batch_y_mark = batch_y_mark.float().to(self.device) # (batch_size, pred_len, 4)
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-
+                # print(batch_x.shape, batch_x_mark.shape, batch_y.shape, batch_y_mark.shape)
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -165,6 +165,32 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return self.model
 
+    def save_predictions(self, preds, trues, file_path="predictions_and_trues.json"):
+        """
+        Save the predictions and true values to a file for later evaluation.
+        If the file already exists, append the new predictions and true values.
+
+        Parameters:
+        - preds (ndarray): The predicted values from the model.
+        - trues (ndarray): The ground truth values.
+        - file_path (str): The file path where the data will be saved.
+        """
+        # Convert ndarray to list for JSON serialization
+        new_data = {
+            'predictions': preds,
+            'ground_truths': trues
+        }
+
+        existing_data = {'predictions': [], 'ground_truths': []}
+
+        # Append new data to existing data
+        existing_data['predictions'].extend(new_data['predictions'])
+        existing_data['ground_truths'].extend(new_data['ground_truths'])
+
+        # Write the updated data back to the file
+        with open(file_path, 'w') as f:
+            json.dump(existing_data, f)
+
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         if test:
@@ -201,6 +227,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
+                # print(f"outputs.shape: {outputs.shape}, batch_y.shape: {batch_y.shape}")
                 if test_data.scale and self.args.inverse:
                     shape = batch_y.shape
                     if outputs.shape[-1] != batch_y.shape[-1]:
@@ -228,14 +255,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
         print('test shape:', preds.shape, trues.shape)
+
+        # result save
+        folder_path = './results/' + self.args.model + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        self.save_predictions(preds.tolist(), trues.tolist(), file_path=os.path.join(folder_path, self.args.model_id + "_results.json"))
+        print("\nOverall metrics:")
+        mae, mse, _, _, _, auroc, auprc, acc, f1, recall, precision, npv, tn, fp, fn, tp = run_metrics.run_metric(preds, trues)
+
+        # dtw calculation
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
         trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
         print('test shape:', preds.shape, trues.shape)
-
-        # result save
-        folder_path = './results/' + setting + '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
 
         # dtw calculation
         if self.args.use_dtw:
@@ -252,17 +285,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         else:
             dtw = 'Not calculated'
 
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f = open("result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
+        f.write('auroc:{:.3f}, auprc:{:.3f}, acc:{:.3f},\n'.format(auroc, auprc, acc))
+        f.write('f1:{:.3f}, recall:{:.3f}, precision:{:.3f}, npv:{:.3f},\n'.format(f1, recall, precision, npv))
+        f.write('tn:{:.3f}, fp:{:.3f}, fn:{:.3f}, tp:{:.3f}\n'.format(tn, fp, fn, tp))
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f.write('\n')
         f.write('\n')
         f.close()
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        # np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+        # np.save(folder_path + 'pred.npy', preds)
+        # np.save(folder_path + 'true.npy', trues)
 
         return
