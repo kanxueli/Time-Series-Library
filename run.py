@@ -140,6 +140,16 @@ if __name__ == '__main__':
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 
+    # Time-time training configuration
+    parser.add_argument('--use_ttt', type=int, default=1, 
+                        help='whether to use time-time training')
+    parser.add_argument('--sample_step', type=int, default=5,
+                        help='sample step for time-time training')
+    parser.add_argument('--ttt_train_epochs', type=int, default=10, help='ttt steps')
+    parser.add_argument('--ttt_test_batch_size', type=int, default=8, help='ttt batch size')
+    parser.add_argument('--ttt_train_batch_size', type=int, default=32, help='ttt batch size')
+    parser.add_argument('--ttt_lr', type=float, default=0.0001, help='ttt learning rate')
+    
     args = parser.parse_args()
     if torch.cuda.is_available() and args.use_gpu:
         args.device = torch.device('cuda:{}'.format(args.gpu))
@@ -202,7 +212,8 @@ if __name__ == '__main__':
             exp.train(setting)
 
             print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-            exp.test(setting)
+            # exp.test(setting)
+            exp.test_ttt(setting)
             if args.gpu_type == 'mps':
                 torch.backends.mps.empty_cache()
             elif args.gpu_type == 'cuda':

@@ -1,5 +1,5 @@
 root_path=/home/likx/time_series_forecasting/cma_dataset_preprocess/vitaldb_dataset/sample_step30/
-device_index=2
+device_index=0
 seq_len=30
 batch_size=512
 model_name=Informer

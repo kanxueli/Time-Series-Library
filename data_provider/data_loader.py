@@ -1072,13 +1072,6 @@ class VitalDBLoader(Dataset):
         seq_x_mark = self._generate_time_features(x_context)
         seq_y_mark = self._generate_time_features(x_future)
 
-        # Debug information
-        # print(f"Debug - features: {self.features}")
-        # print(f"Debug - x_context shape: {x_context.shape}")
-        # print(f"Debug - x_future shape: {x_future.shape}")
-        # print(f"Debug - seq_x_mark shape: {seq_x_mark.shape}")
-        # print(f"Debug - seq_y_mark shape: {seq_y_mark.shape}")
-
         return x_context, x_future, seq_x_mark, seq_y_mark
 
     def _generate_time_features(self, data):
@@ -1119,3 +1112,119 @@ class VitalDBLoader(Dataset):
 
     def _get_train_scaler(self):
         return self.scalers
+
+    def get_all_caseids(self, include_sets=['test']):
+        """获取所有病例ID"""
+        if include_sets is None:
+            include_sets = [self.flag]
+        
+        caseids = set()
+        for caseid in self.case_data.keys():
+            caseids.add(caseid)
+        
+        return list(caseids)
+
+    def get_case_data_length(self, caseid):
+        """获取指定病例的数据长度"""
+        if caseid not in self.case_data:
+            raise ValueError(f"Case ID {caseid} not found in dataset")
+        return len(self.case_data[caseid]['Solar8000/ART_MBP'])
+
+    def get_case_valid_range(self, caseid):
+        """获取指定病例的有效数据范围"""
+        if caseid in self.case_data:
+            return (0, len(self.case_data[caseid]['Solar8000/ART_MBP']))
+        return None
+
+    def get_case_series(self, caseid, start_idx=None, end_idx=None):
+        """获取指定病例的时间序列数据，返回所有特征的数据"""
+        if caseid not in self.case_data:
+            raise ValueError(f"Case ID {caseid} not found in dataset")
+        
+        if start_idx is None:
+            start_idx = 0
+        if end_idx is None:
+            end_idx = len(self.case_data[caseid]['Solar8000/ART_MBP'])
+            
+        # 获取所有特征的数据
+        data_dict = {}
+        for feature in self.time_series_features:
+            if feature in self.case_data[caseid]:
+                data_dict[feature] = np.array(self.case_data[caseid][feature][start_idx:end_idx])
+                
+        return data_dict
+
+    def create_case_dataloader(self, caseid, batch_size, seq_len, pred_len, sample_step=1):
+        """为指定的病例创建数据加载器，用于TTT，支持多变量数据"""
+        range_info = self.get_case_valid_range(caseid)
+        if range_info is None:
+            raise ValueError(f"Case ID {caseid} not found in current {self.flag} set")
+            
+        start_idx, end_idx = range_info
+        data_dict = self.get_case_series(caseid, start_idx, end_idx)
+        
+        # 数据长度验证
+        required_length = seq_len + pred_len
+        if len(data_dict['Solar8000/ART_MBP']) < required_length:
+            return []
+        
+        # 生成该病例的所有样本
+        batches = []
+        contexts_batch = []
+        futures_batch = []
+        x_marks_batch = []
+        y_marks_batch = []
+
+        for i in range(0, len(data_dict['Solar8000/ART_MBP']) - required_length + 1, sample_step):
+            # 检查数据突变
+            segment_data = data_dict['Solar8000/ART_MBP'][i:i+required_length]
+            if (np.abs(np.diff(segment_data)) > 60).any():  
+                continue # abrupt change -> noise
+
+            # 准备多变量输入数据
+            x_context_list = []
+            for feature in self.time_series_features:
+                if feature in data_dict:
+                    x_context_list.append(torch.tensor(data_dict[feature][i:i+seq_len], dtype=torch.float32))
+            x_context = torch.stack(x_context_list, dim=1)  # [seq_len, features]
+            
+            # 准备多变量未来数据
+            x_future_list = []
+            for feature in self.time_series_features:
+                if feature in data_dict:
+                    x_future_list.append(torch.tensor(data_dict[feature][i+seq_len:i+seq_len+pred_len], dtype=torch.float32))
+            x_future = torch.stack(x_future_list, dim=1)  # [pred_len, features]
+            
+            # 生成时间特征
+            x_mark = torch.zeros((seq_len, 4), dtype=torch.float32)
+            y_mark = torch.zeros((pred_len, 4), dtype=torch.float32)
+            
+            contexts_batch.append(x_context)
+            futures_batch.append(x_future)
+            x_marks_batch.append(x_mark)
+            y_marks_batch.append(y_mark)
+            
+            if len(contexts_batch) == batch_size:
+                batches.append((
+                    torch.stack(contexts_batch),  # [batch_size, seq_len, features]
+                    torch.stack(x_marks_batch),   # [batch_size, seq_len, 4]
+                    torch.stack(y_marks_batch),   # [batch_size, pred_len, 4]
+                    torch.stack(futures_batch)    # [batch_size, pred_len, features]
+                ))
+                
+                # 清空列表，准备下一个批次
+                contexts_batch = []
+                futures_batch = []
+                x_marks_batch = []
+                y_marks_batch = []
+        
+        # 处理最后一个不完整的batch
+        if contexts_batch:
+            batches.append((
+                torch.stack(contexts_batch),
+                torch.stack(x_marks_batch),
+                torch.stack(y_marks_batch),
+                torch.stack(futures_batch)
+            ))
+            
+        return batches

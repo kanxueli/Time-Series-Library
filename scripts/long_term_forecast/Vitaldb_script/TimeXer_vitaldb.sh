@@ -1,5 +1,5 @@
 root_path=/home/likx/time_series_forecasting/cma_dataset_preprocess/vitaldb_dataset/sample_step30/
-device_index=2
+device_index=0
 seq_len=30
 batch_size=512
 model_name=TimeXer
@@ -16,7 +16,7 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --seq_len $seq_len \
   --label_len $((seq_len / 2)) \
   --pred_len 10 \
-  --train_epochs 10\
+  --train_epochs 10 \
   --e_layers 1 \
   --factor 3 \
   --enc_in 4 \
