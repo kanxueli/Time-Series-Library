@@ -752,7 +752,7 @@ class UEAloader(Dataset):
 class VitalDBLoader(Dataset):
     def __init__(self, args, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='Solar8000/ART_MBP', scale=False, timeenc=0, freq='h',
+                 target='Solar8000/ART_MBP', scale=True, timeenc=0, freq='h',
                  seasonal_patterns=None, sample_step=5):
         # size [seq_len, label_len, pred_len]
         self.args = args
@@ -1176,10 +1176,18 @@ class VitalDBLoader(Dataset):
         y_marks_batch = []
 
         for i in range(0, len(data_dict['Solar8000/ART_MBP']) - required_length + 1, sample_step):
-            # 检查数据突变
             segment_data = data_dict['Solar8000/ART_MBP'][i:i+required_length]
-            if (np.abs(np.diff(segment_data)) > 60).any():  
-                continue # abrupt change -> noise
+            
+            if self.scale:
+                segment_data_original = self.scalers['Solar8000/ART_MBP'].inverse_transform(
+                    segment_data.reshape(-1, 1)).flatten()
+                # 使用原始数据的阈值(60 mmHg)检测突变
+                if (np.abs(np.diff(segment_data_original)) > 60).any():
+                    continue  # abrupt change -> noise
+            else:
+                # 如果数据未归一化,直接使用原始阈值
+                if (np.abs(np.diff(segment_data)) > 60).any():
+                    continue  # abrupt change -> noise
 
             # 准备多变量输入数据
             x_context_list = []
@@ -1195,9 +1203,11 @@ class VitalDBLoader(Dataset):
                     x_future_list.append(torch.tensor(data_dict[feature][i+seq_len:i+seq_len+pred_len], dtype=torch.float32))
             x_future = torch.stack(x_future_list, dim=1)  # [pred_len, features]
             
-            # 生成时间特征
-            x_mark = torch.zeros((seq_len, 4), dtype=torch.float32)
-            y_mark = torch.zeros((pred_len, 4), dtype=torch.float32)
+            # 生成时间特征并转换为张量
+            x_mark_np = self._generate_time_features(x_context.numpy())
+            y_mark_np = self._generate_time_features(x_future.numpy())
+            x_mark = torch.tensor(x_mark_np, dtype=torch.float32)
+            y_mark = torch.tensor(y_mark_np, dtype=torch.float32)
             
             contexts_batch.append(x_context)
             futures_batch.append(x_future)

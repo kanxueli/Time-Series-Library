@@ -145,7 +145,7 @@ if __name__ == '__main__':
                         help='whether to use time-time training')
     parser.add_argument('--sample_step', type=int, default=5,
                         help='sample step for time-time training')
-    parser.add_argument('--ttt_train_epochs', type=int, default=10, help='ttt steps')
+    parser.add_argument('--ttt_train_epochs', type=int, default=3, help='ttt steps')
     parser.add_argument('--ttt_test_batch_size', type=int, default=8, help='ttt batch size')
     parser.add_argument('--ttt_train_batch_size', type=int, default=32, help='ttt batch size')
     parser.add_argument('--ttt_lr', type=float, default=0.0001, help='ttt learning rate')
@@ -243,7 +243,8 @@ if __name__ == '__main__':
             args.des, ii)
 
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test(setting, test=1)
+        # exp.test(setting, test=1)
+        exp.test_ttt(setting, test=1)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':

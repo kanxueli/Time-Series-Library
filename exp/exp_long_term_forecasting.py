@@ -335,6 +335,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             if self.args.use_amp:
                 scaler = torch.cuda.amp.GradScaler()
+
+            self.model_parameter_check()
             
         preds = []
         trues = []
@@ -428,7 +430,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     ttt_data = self._create_ttt_train_data(
                         case_data, ttt_start_idx, last_test_idx,
                         self.args.seq_len, self.args.pred_len,
-                        self.args.sample_step
+                        self.args.sample_step, test_data
                     )
                     print(f"TTT train data size: {len(ttt_data)}")
 
@@ -500,7 +502,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         
         return
 
-    def _create_ttt_train_data(self, case_data, start_idx, end_idx, context_len, horizon_len, sample_step):
+    def model_parameter_check(self):
+        pytorch_total_params = sum(p.numel() for p in self.model.parameters())
+        print("########## Parameters number for all {} M  #########".format(pytorch_total_params/1e6))
+
+    # Here to determine what parameter to train
+    def choose_training_parts(self, module_name=None): 
+        for name, param in self.model.named_parameters():
+            if module_name == "Prompt_Emb": 
+                if "encoder" in name:
+                    param.requires_grad = True
+                    # print("trainable:", name)
+                else:
+                    param.requires_grad = False
+            elif module_name == "RM_HEAD":
+                if "projection_layer" in name:
+                    param.requires_grad = True
+                    # print("trainable:", name)
+                else:
+                    param.requires_grad = False
+            else:
+                param.requires_grad = True
+
+    def _create_ttt_train_data(self, case_data, start_idx, end_idx, context_len, horizon_len, sample_step, test_data=None):
         """创建TTT训练数据，确保不会发生数据泄露
         
         Args:
@@ -510,6 +534,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             context_len: 输入序列长度
             horizon_len: 预测长度
             sample_step: 采样步长
+            test_data: 测试数据集实例,用于获取scale信息和执行逆归一化
         """
         ttt_data = []
         required_length = context_len + horizon_len
@@ -520,7 +545,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             return []
         
         # # reset start_id
-        tmp_start = end_idx - context_len - horizon_len - sample_step * 31
+        tmp_start = end_idx - context_len - horizon_len - sample_step * 31 - 1
         if tmp_start > 0:
             start_idx = tmp_start
         else:
@@ -528,7 +553,21 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print(f'ttt_train: {(start_idx, end_idx)}')
 
         # 生成TTT训练样本
-        for i in range(start_idx, end_idx - required_length + 1, sample_step):
+        for i in range(start_idx, end_idx - required_length, sample_step):
+            segment_data = case_data['Solar8000/ART_MBP'][i:i+required_length]
+            
+            # 处理归一化数据的情况
+            if test_data.scale:
+                segment_data_original = test_data.scalers['Solar8000/ART_MBP'].inverse_transform(
+                    segment_data.reshape(-1, 1)).flatten()
+                # 使用原始数据的阈值(60 mmHg)检测突变
+                if (np.abs(np.diff(segment_data_original)) > 60).any():
+                    continue  # abrupt change -> noise
+            else:
+                # 数据未归一化，直接使用原始阈值
+                if (np.abs(np.diff(segment_data)) > 60).any():
+                    continue
+
             # 提取上下文和未来数据
             x_context_list = []
             x_future_list = []
@@ -542,24 +581,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             x_context_array = np.array(x_context_list).transpose()  # [context_len, num_features]
             x_future_array = np.array(x_future_list).transpose()  # [horizon_len, num_features]
             
-            # # 数据增强
-            # if self.args.use_data_augmentation:
-            #     # 添加噪声
-            #     if self.args.jitter:
-            #         x_context_array = self._add_jitter(x_context_array)
-            #         x_future_array = self._add_jitter(x_future_array)
-                
-            #     # 缩放
-            #     if self.args.scaling:
-            #         x_context_array = self._scale_data(x_context_array)
-            #         x_future_array = self._scale_data(x_future_array)
-            
             x_context = torch.tensor(x_context_array, dtype=torch.float32)
             x_future = torch.tensor(x_future_array, dtype=torch.float32)
             
             # 生成时间特征
             x_mark = torch.zeros((context_len, 4), dtype=torch.float32)
             y_mark = torch.zeros((horizon_len, 4), dtype=torch.float32)
+            for i in range(context_len):
+                x_mark[i, 0] = 1
+                x_mark[i, 1] = 1
+                x_mark[i, 2] = 1
+                x_mark[i, 3] = 1
+                
+            for i in range(horizon_len):
+                y_mark[i, 0] = 1
+                y_mark[i, 1] = 1
+                y_mark[i, 2] = 1
+                y_mark[i, 3] = 1
             
             ttt_data.append((x_context, x_future, x_mark, y_mark))
         
@@ -568,15 +606,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return ttt_data
         
-    def _add_jitter(self, data, scale=0.1):
-        """添加随机噪声"""
-        noise = np.random.normal(0, scale, data.shape)
-        return data + noise
-        
-    def _scale_data(self, data, scale_range=(0.8, 1.2)):
-        """随机缩放数据"""
-        scale = np.random.uniform(scale_range[0], scale_range[1])
-        return data * scale
         
     def reset_ttt_environment(self, base_model=None, optimizer_status=None):
         self.model = copy.deepcopy(base_model)
