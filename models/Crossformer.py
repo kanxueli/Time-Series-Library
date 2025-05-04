@@ -68,10 +68,13 @@ class Model(nn.Module):
                 for l in range(configs.e_layers + 1)
             ],
         )
-        if self.task_name == 'imputation' or self.task_name == 'anomaly_detection':
-            self.head = FlattenHead(configs.enc_in, self.head_nf, configs.seq_len,
-                                    head_dropout=configs.dropout)
-        elif self.task_name == 'classification':
+        
+        # 为所有任务类型创建head属性，以支持多任务学习
+        self.head = FlattenHead(configs.enc_in, self.head_nf, configs.seq_len,
+                                head_dropout=configs.dropout)
+                                
+        # 原有的特定任务头部
+        if self.task_name == 'classification':
             self.flatten = nn.Flatten(start_dim=-2)
             self.dropout = nn.Dropout(configs.dropout)
             self.projection = nn.Linear(
@@ -130,16 +133,28 @@ class Model(nn.Module):
         return output
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+        if (self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast') and mask is not None:
+            # 分开处理预测任务和重建任务，对于预测任务使用原始未掩码数据，对于重建任务使用掩码数据
+            # 预测任务：使用完整数据进行预测
+            forecast_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+            forecast_out = forecast_out[:, -self.pred_len:, :]  # [B, L, D]
+            
+            # 重建任务：使用掩码数据进行重建
+            x_enc_masked = x_enc.clone()
+            x_enc_masked = x_enc_masked.masked_fill(mask == 0, 0)
+            imputation_out = self.imputation(x_enc_masked, x_mark_enc, x_dec, x_mark_dec, mask)
+            
+            return forecast_out, imputation_out
+        elif self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-        if self.task_name == 'imputation':
+        elif self.task_name == 'imputation':
             dec_out = self.imputation(x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
             return dec_out  # [B, L, D]
-        if self.task_name == 'anomaly_detection':
+        elif self.task_name == 'anomaly_detection':
             dec_out = self.anomaly_detection(x_enc)
             return dec_out  # [B, L, D]
-        if self.task_name == 'classification':
+        elif self.task_name == 'classification':
             dec_out = self.classification(x_enc, x_mark_enc)
             return dec_out  # [B, N]
         return None

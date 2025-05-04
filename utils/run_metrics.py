@@ -101,10 +101,10 @@ def Classify_Metrics(pred, true):
     acc = accuracy_score(ground_true_labels, prediction_lables)
     tn, fp, fn, tp = confusion_matrix(ground_true_labels, prediction_lables).ravel()
 
-    testres = 'auroc={:.3f}, auprc={:.3f} acc={:.3f}, F1={:.3f}, Recall={:.1f}, Prec={:.1f}, NPV={:.1f}, TN={}, fp={}, fn={}, TP={}'.format(auroc, auprc, acc, f1, tp/(tp+fn)*100, tp/(tp+fp)*100, tn/(tn+fn)*100, tn, fp, fn, tp)
+    testres = 'auroc={:.3f}, auprc={:.3f} acc={:.3f}, F1={:.3f}, Recall={:.1f}, Prec={:.1f}, NPV={:.1f}, TN={}, fp={}, fn={}, TP={}'.format(auroc*100, auprc*100, acc*100, f1*100, tp/(tp+fn)*100, tp/(tp+fp)*100, tn/(tn+fn)*100, tn, fp, fn, tp)
     print(testres)
 
-    return auroc, auprc, acc, f1*100, tp/(tp+fn)*100, tp/(tp+fp)*100, tn/(tn+fn)*100, tn, fp, fn, tp
+    return auroc*100, auprc*100, acc*100, f1*100, tp/(tp+fn)*100, tp/(tp+fp)*100, tn/(tn+fn)*100, tn, fp, fn, tp
 
 
 def RSE(pred, true):
@@ -146,7 +146,7 @@ def run_metric(pred, true):
     mspe = MSPE(pred, true)
 
     auroc, auprc, acc, f1, recall, precision, npv, tn, fp, fn, tp = Classify_Metrics(pred, true)
-    print(f'Metrics: MAE={mae}, MSE={mse}, RMSE={rmse}, MAPE={mape}, MSPE={mspe}')
+    print(f'Metrics: MAE={mae:.4f}, MSE={mse:.4f}, RMSE={rmse:.4f}, MAPE={mape:.4f}, MSPE={mspe:.4f}')
 
     return mae, mse, rmse, mape, mspe, auroc, auprc, acc, f1, recall, precision, npv, tn, fp, fn, tp
 

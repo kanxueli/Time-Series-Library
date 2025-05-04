@@ -777,14 +777,15 @@ class VitalDBLoader(Dataset):
         self.root_path = root_path
         self.data_path = data_path
         
-        # 定义时间序列特征
+        # 定义时间序列特征 - 顺序固定，不可更改
         self.time_series_features = [
-            'Solar8000/BT',
-            'Solar8000/HR',
-            'Solar8000/ART_DBP',
-            'Solar8000/ART_MBP',  # 目标变量
+            'Solar8000/BT',    # 体温 (Body Temperature) - 特征索引: 0
+            'Solar8000/HR',    # 心率 (Heart Rate) - 特征索引: 1
+            'Solar8000/ART_DBP', # 动脉舒张压 (Arterial Diastolic Blood Pressure) - 特征索引: 2
+            'Solar8000/ART_MBP',  # 动脉平均血压 (Arterial Mean Blood Pressure) - 特征索引: 3, 目标变量
         ]
         
+
         # 数据存储结构
         self.samples = []  # 格式：(caseid, start_idx)
         self.case_data = {}  # {caseid: full_data}
@@ -1052,20 +1053,19 @@ class VitalDBLoader(Dataset):
             x_context = x_context.reshape(-1, 1)  # (seq_len, 1)
             x_future = x_future.reshape(-1, 1)    # (label+pred_len, 1)
         else:  # 多变量模式
-            # 分别获取每个特征的数据作为输入序列
             x_context_list = []
-            for feature in self.time_series_features:
+            for feature in self.time_series_features:  # 保持特征顺序与列表定义一致
                 x_context_list.append(np.array(full_data[feature][start:end]))
-            # 堆叠成多变量数据
+            # 堆叠成多变量数据，axis=1确保特征维度按列排列
             x_context = np.stack(x_context_list, axis=1)  # (seq_len, features)
             
-            # 获取label和prediction部分
+            # 获取label和prediction部分，同样保持特征顺序
             x_future_list = []
-            for feature in self.time_series_features:
+            for feature in self.time_series_features:  # 保持特征顺序与列表定义一致
                 label = np.array(full_data[feature][end-self.label_len:end])
                 prediction = np.array(full_data[feature][end:label_end])
                 x_future_list.append(np.concatenate([label, prediction]))
-            # 堆叠成多变量数据
+            # 堆叠成多变量数据，axis=1确保特征维度按列排列
             x_future = np.stack(x_future_list, axis=1)  # (label+pred_len, features)
         
         # 生成时间戳特征
@@ -1105,8 +1105,13 @@ class VitalDBLoader(Dataset):
             if data.shape[1] == 1:  # 如果数据只有1列，按单变量处理
                 return self.scalers['Solar8000/ART_MBP'].inverse_transform(data)
             else:  # 多变量处理
+                # 特征顺序为:
+                # 0: 'Solar8000/BT' - 体温
+                # 1: 'Solar8000/HR' - 心率
+                # 2: 'Solar8000/ART_DBP' - 动脉舒张压
+                # 3: 'Solar8000/ART_MBP' - 动脉平均血压 (目标变量)
                 result = np.zeros_like(data)
-                for i, feature in enumerate(self.time_series_features):
+                for i, feature in enumerate(self.time_series_features):  # 保持与特征列表相同的顺序
                     result[:, i] = self.scalers[feature].inverse_transform(data[:, i].reshape(-1, 1)).flatten()
                 return result
 
@@ -1143,7 +1148,7 @@ class VitalDBLoader(Dataset):
         
         if start_idx is None:
             start_idx = 0
-        if end_idx is None:
+        if end_idx is None: # 如果init的scale为True, 则后续的数据都是归一化后的数据
             end_idx = len(self.case_data[caseid]['Solar8000/ART_MBP'])
             
         # 获取所有特征的数据
@@ -1190,18 +1195,23 @@ class VitalDBLoader(Dataset):
                     continue  # abrupt change -> noise
 
             # 准备多变量输入数据
+            # 特征顺序为:
+            # 0: 'Solar8000/BT' - 体温
+            # 1: 'Solar8000/HR' - 心率
+            # 2: 'Solar8000/ART_DBP' - 动脉舒张压
+            # 3: 'Solar8000/ART_MBP' - 动脉平均血压 (目标变量)
             x_context_list = []
-            for feature in self.time_series_features:
+            for feature in self.time_series_features:  # 严格按照特征列表定义的顺序
                 if feature in data_dict:
                     x_context_list.append(torch.tensor(data_dict[feature][i:i+seq_len], dtype=torch.float32))
             x_context = torch.stack(x_context_list, dim=1)  # [seq_len, features]
             
-            # 准备多变量未来数据
+            # 准备多变量未来数据，同样保持特征顺序一致
             x_future_list = []
-            for feature in self.time_series_features:
+            for feature in self.time_series_features:  # 严格按照特征列表定义的顺序
                 if feature in data_dict:
-                    x_future_list.append(torch.tensor(data_dict[feature][i+seq_len:i+seq_len+pred_len], dtype=torch.float32))
-            x_future = torch.stack(x_future_list, dim=1)  # [pred_len, features]
+                    x_future_list.append(torch.tensor(data_dict[feature][i+seq_len-self.label_len:i+seq_len+pred_len], dtype=torch.float32))
+            x_future = torch.stack(x_future_list, dim=1)  # [label+pred_len, features]
             
             # 生成时间特征并转换为张量
             x_mark_np = self._generate_time_features(x_context.numpy())
@@ -1218,8 +1228,8 @@ class VitalDBLoader(Dataset):
                 batches.append((
                     torch.stack(contexts_batch),  # [batch_size, seq_len, features]
                     torch.stack(x_marks_batch),   # [batch_size, seq_len, 4]
-                    torch.stack(y_marks_batch),   # [batch_size, pred_len, 4]
-                    torch.stack(futures_batch)    # [batch_size, pred_len, features]
+                    torch.stack(y_marks_batch),   # [batch_size, label+pred_len, 4]
+                    torch.stack(futures_batch)    # [batch_size, label+pred_len, features]
                 ))
                 
                 # 清空列表，准备下一个批次

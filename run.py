@@ -47,7 +47,6 @@ if __name__ == '__main__':
 
     # inputation task
     parser.add_argument('--mask_rate', type=float, default=0.25, help='mask ratio')
-
     # anomaly detection task
     parser.add_argument('--anomaly_ratio', type=float, default=0.25, help='prior anomaly ratio (%%)')
 
@@ -90,7 +89,7 @@ if __name__ == '__main__':
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
-    parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
+    parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='optimizer learning rate')
     parser.add_argument('--des', type=str, default='test', help='exp description')
     parser.add_argument('--loss', type=str, default='MSE', help='loss function')
@@ -141,14 +140,17 @@ if __name__ == '__main__':
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 
     # Time-time training configuration
-    parser.add_argument('--use_ttt', type=int, default=1, 
+    parser.add_argument('--use_ttt', type=int, default=0, 
                         help='whether to use time-time training')
     parser.add_argument('--sample_step', type=int, default=5,
                         help='sample step for time-time training')
-    parser.add_argument('--ttt_train_epochs', type=int, default=3, help='ttt steps')
-    parser.add_argument('--ttt_test_batch_size', type=int, default=8, help='ttt batch size')
-    parser.add_argument('--ttt_train_batch_size', type=int, default=32, help='ttt batch size')
-    parser.add_argument('--ttt_lr', type=float, default=0.0001, help='ttt learning rate')
+    parser.add_argument('--use_multi_task', type=int, default=0, 
+                        help='whether to use multi-task learning (0: disable, 1: enable)')
+    parser.add_argument('--ttt_train_epochs', type=int, default=1, help='ttt steps')
+    parser.add_argument('--ttt_test_batch_size', type=int, default=512, help='ttt batch size')
+    parser.add_argument('--ttt_train_batch_size', type=int, default=64, help='ttt batch size')
+    parser.add_argument('--ttt_lr', type=float, default=0.00005, help='ttt learning rate')
+    parser.add_argument('--mr_loss_ratio', type=float, default=0.1, help='mr loss ratio')
     
     args = parser.parse_args()
     if torch.cuda.is_available() and args.use_gpu:

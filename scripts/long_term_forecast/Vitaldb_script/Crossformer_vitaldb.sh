@@ -4,6 +4,10 @@ seq_len=30
 batch_size=512
 model_name=Crossformer
 
+use_multi_task=1
+mask_rate=0.2
+mr_loss_ratio=0.5
+
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
@@ -24,7 +28,10 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --c_out 1 \
   --des 'Exp_15to5min' \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio
 
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
@@ -46,7 +53,10 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --c_out 1 \
   --des 'Exp_15to10min' \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio
 
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
@@ -68,4 +78,7 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --c_out 1 \
   --des 'Exp_15to15min' \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio

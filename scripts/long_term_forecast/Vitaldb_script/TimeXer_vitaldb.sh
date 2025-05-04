@@ -1,9 +1,13 @@
 root_path=/home/likx/time_series_forecasting/cma_dataset_preprocess/vitaldb_dataset/sample_step30/
-device_index=0
+device_index=1
 seq_len=30
 batch_size=512
 model_name=TimeXer
 
+# 多任务学习参数
+use_multi_task=1
+mask_rate=0.20    # 掩码率
+mr_loss_ratio=0.5
 
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
@@ -26,7 +30,10 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --batch_size $batch_size \
   --des 'Exp_15to5min' \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio
 
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
@@ -48,7 +55,10 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --d_model 128 \
   --batch_size $batch_size \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio
 
 CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --task_name long_term_forecast \
@@ -71,5 +81,8 @@ CUDA_VISIBLE_DEVICES=$device_index python -u run.py \
   --d_ff 1024 \
   --batch_size $batch_size \
   --itr 1 \
-  --inverse
+  --inverse \
+  --use_multi_task $use_multi_task \
+  --mask_rate $mask_rate \
+  --mr_loss_ratio $mr_loss_ratio
 

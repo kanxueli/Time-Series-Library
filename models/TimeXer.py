@@ -153,6 +153,10 @@ class Model(nn.Module):
         self.head_nf = configs.d_model * (self.patch_num + 1)
         self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
                                 head_dropout=configs.dropout)
+                                
+        # 添加重建任务的头部，用于多任务学习中的掩码重建
+        self.reconstruction_head = FlattenHead(configs.enc_in, self.head_nf, configs.seq_len,
+                                head_dropout=configs.dropout)
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         if self.use_norm:
@@ -181,7 +185,7 @@ class Model(nn.Module):
             dec_out = dec_out * (stdev[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
             dec_out = dec_out + (means[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
 
-        return dec_out
+        return dec_out, enc_out
 
 
     def forecast_multi(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
@@ -211,15 +215,52 @@ class Model(nn.Module):
             dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
             dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
 
-        return dec_out
+        return dec_out, enc_out
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+        # 判断是否为多任务学习模式
+        multi_task_mode = mask is not None
+        
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             if self.features == 'M':
-                dec_out = self.forecast_multi(x_enc, x_mark_enc, x_dec, x_mark_dec)
-                return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+                dec_out, enc_out = self.forecast_multi(x_enc, x_mark_enc, x_dec, x_mark_dec)
+                forecast_out = dec_out[:, -self.pred_len:, :]  # [B, L, D]
             else:
-                dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-                return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+                dec_out, enc_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+                forecast_out = dec_out[:, -self.pred_len:, :]  # [B, L, D]
+                
+            # 如果是多任务学习模式，则同时输出重建结果
+            if multi_task_mode:
+                # 为重建任务创建掩码数据
+                x_enc_masked = x_enc.clone()
+                x_enc_masked = x_enc_masked.masked_fill(mask == 0, 0)
+                
+                # 为重建任务单独处理掩码后的数据
+                if self.features == 'M':
+                    _, masked_enc_out = self.forecast_multi(x_enc_masked, x_mark_enc, x_dec, x_mark_dec)
+                else:
+                    _, masked_enc_out = self.forecast(x_enc_masked, x_mark_enc, x_dec, x_mark_dec)
+                
+                # 重建任务的输出
+                imputation_out = self.reconstruction_head(masked_enc_out)  # z: [bs x nvars x seq_len]
+                imputation_out = imputation_out.permute(0, 2, 1)
+                
+                if self.use_norm:
+                    if self.features == 'M':
+                        # De-Normalization
+                        means = x_enc.mean(1, keepdim=True).detach()
+                        stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+                        imputation_out = imputation_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
+                        imputation_out = imputation_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
+                    else:
+                        # De-Normalization
+                        means = x_enc.mean(1, keepdim=True).detach()
+                        stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+                        imputation_out = imputation_out * (stdev[:, 0, -1:].unsqueeze(1).repeat(1, self.seq_len, 1))
+                        imputation_out = imputation_out + (means[:, 0, -1:].unsqueeze(1).repeat(1, self.seq_len, 1))
+                
+                return forecast_out, imputation_out
+                
+            return forecast_out
         else:
             return None
