@@ -52,8 +52,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         data_set, data_loader = data_provider(self.args, flag)
         return data_set, data_loader
 
-    def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+    def _select_optimizer(self, lr=None):
+        if lr is None:
+            lr = self.args.learning_rate
+        model_optim = optim.Adam(self.model.parameters(), lr=lr)
         return model_optim
 
     def _select_criterion(self):
@@ -469,9 +471,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             if not hasattr(self, 'reference_library'):
                 self.build_reference_sample_bank()
 
+            # 初始化scaler变量
+            scaler = None
             if self.args.use_amp:
                 scaler = torch.cuda.amp.GradScaler()
-            
+
         preds = []
         trues = []
         folder_path = './test_results/' + setting + '/'
@@ -579,96 +583,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                         if len(ttt_loader) > 0:
                             self.reset_ttt_environment()
-                            
                             # TTT训练
-                            batch_num = len(ttt_loader)
-                            criterion = self._select_criterion()
-                            for ttt_epoch in range(self.args.ttt_train_epochs):
-                                total_loss = 0.0
-                                forecast_loss_total = 0.0
-                                imputation_loss_total = 0.0
-                                self.model.train()
-                                for tt_idx, batch in enumerate(ttt_loader):
-                                    ttt_batch_x, ttt_batch_y, ttt_batch_x_mark, ttt_batch_y_mark = batch
-                                    self.model_optim.zero_grad()
-                                    ttt_batch_x = ttt_batch_x.float().to(self.device)
-                                    ttt_batch_y = ttt_batch_y.float().to(self.device)
-                                    ttt_batch_x_mark = ttt_batch_x_mark.float().to(self.device)
-                                    ttt_batch_y_mark = ttt_batch_y_mark.float().to(self.device)
-                                    
-                                    ttt_dec_inp = torch.zeros_like(ttt_batch_y).float()
-                                    ttt_dec_inp = torch.cat([ttt_batch_y[:, :self.args.label_len, :], ttt_dec_inp], dim=1).float().to(self.device)
-                                    
-                                    if self.args.use_amp:
-                                        with torch.cuda.amp.autocast():
-                                            if self.use_multi_task:
-                                                # 创建掩码用于多任务学习
-                                                B, T, N = ttt_batch_x.shape
-                                                mask = torch.rand((B, T, N)).to(self.device)
-                                                mask[mask <= self.mask_rate] = 0  # masked
-                                                mask[mask > self.mask_rate] = 1  # remained
-                                                
-                                                forecast_out, imputation_out = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark, mask)
-                                                
-                                                # 预测任务损失
-                                                f_dim = -1 if self.args.features == 'MS' else 0
-                                                forecast_out = forecast_out[:, -self.args.pred_len:, f_dim:]
-                                                batch_y_pred = ttt_batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                                                forecast_loss = criterion(forecast_out, batch_y_pred)
-                                                
-                                                # 重建任务损失
-                                                imputation_out = imputation_out[:, :, f_dim:]
-                                                batch_x_imp = ttt_batch_x[:, :, f_dim:]
-                                                mask = mask[:, :, f_dim:]
-                                                imputation_loss = criterion(imputation_out[mask == 0], batch_x_imp[mask == 0])
-                                                
-                                                # 总损失
-                                                ttt_loss = forecast_loss + self.args.mr_loss_ratio * imputation_loss
-                                                forecast_loss_total += forecast_loss.item()
-                                                imputation_loss_total += imputation_loss.item()
-                                            else:
-                                                ttt_outputs = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark)
-                                                ttt_loss = criterion(ttt_outputs, ttt_batch_y[:, -self.args.pred_len:, :])
-                                    else:
-                                        if self.use_multi_task:
-                                            forecast_out, imputation_out = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark, mask)
-                                            
-                                            # 预测任务损失
-                                            f_dim = -1 if self.args.features == 'MS' else 0
-                                            forecast_out = forecast_out[:, -self.args.pred_len:, f_dim:]
-                                            batch_y_pred = ttt_batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                                            forecast_loss = criterion(forecast_out, batch_y_pred)
-                                            
-                                            # 重建任务损失
-                                            imputation_out = imputation_out[:, :, f_dim:]
-                                            batch_x_imp = ttt_batch_x[:, :, f_dim:]
-                                            mask = mask[:, :, f_dim:]
-                                            imputation_loss = criterion(imputation_out[mask == 0], batch_x_imp[mask == 0])
-                                            
-                                            # 总损失
-                                            ttt_loss = forecast_loss + self.args.mr_loss_ratio * imputation_loss
-                                            forecast_loss_total += forecast_loss.item()
-                                            imputation_loss_total += imputation_loss.item()
-                                        else:
-                                            ttt_outputs = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark)
-                                            ttt_loss = criterion(ttt_outputs, ttt_batch_y[:, -self.args.pred_len:, :])
-                                    
-                                    total_loss += ttt_loss.item()
-                                    
-                                    if self.args.use_amp:
-                                        scaler.scale(ttt_loss).backward()
-                                        scaler.step(self.model_optim)
-                                        scaler.update()
-                                    else:
-                                        ttt_loss.backward()
-                                        self.model_optim.step()
-
-                                if self.use_multi_task:
-                                    print(f"TTT train epoch: {ttt_epoch+1}/{self.args.ttt_train_epochs}, loss: {total_loss / batch_num:.4f}, forecast_loss: {forecast_loss_total / batch_num:.4f}, imputation_loss: {imputation_loss_total / batch_num:.4f}")
-                                else:
-                                    print(f"TTT train epoch: {ttt_epoch+1}/{self.args.ttt_train_epochs}, loss: {total_loss / batch_num:.4f}")
-
-                            self.model.eval()
+                            self._train_ttt(ttt_loader, scaler)
 
                     start_idx = last_test_idx - self.args.seq_len
 
@@ -731,8 +647,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def model_parameter_check(self):
         pytorch_total_params = sum(p.numel() for p in self.model.parameters())
         print(f"########## Parameters number for all {pytorch_total_params/(1024*1024):.2f} M  #########")
-        # for name, param in self.model.named_parameters():
-        #     print(f"Parameter: {name}, Shape: {param.size()}")
+        for name, param in self.model.named_parameters():
+            print(f"Parameter: {name}, Shape: {param.size()}")
         # for name, module in self.model.named_children():
         #     print(f"Module name: {name}, Module: {module}")
 
@@ -749,11 +665,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 trainable_params += param.numel()
             else:
                 trainable = any([
+                    # shared parameters
+                    "norm" in name,
+                    # Crossformer
                     "linear_pred" in name, 
                     "enc_pos_embedding" in name,
                     "dec_pos_embedding" in name,
-                    "norm" in name,
-                    # "decoder.decode_layers.2.MLP1" in name,
+                    # PAttn
+                    "in_layer" in name,
+                    "out_layer" in name,
+                    # TimeXer
+                    "en_embedding" in name,
+                    "head.linear" in name,
                 ])
                 param.requires_grad = trainable
                 if trainable:
@@ -819,7 +742,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             
             # 计算主特征趋势和统计量
             trend = np.polyfit(np.arange(len(main_context)), main_context, 1)[0]
-            main_std = np.std(main_context) + 1e-6
+            main_std = np.std(main_context) # + 1e-6
             trend_strength = np.abs(trend) * len(main_context) / main_std
             
             # 根据趋势强度确定增强参数
@@ -829,7 +752,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     trend_noise = trend * np.random.uniform(0.8, 1.2)
             else:
-                trend_noise = np.random.normal(0, main_std * 0.05)
+                trend_noise = np.random.normal(0, 0.1)
             
             # 生成噪声
             noise_scale = main_std * 0.05
@@ -853,7 +776,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 
                 # 计算特征统计量
                 dim_mean = np.mean(dim_context)
-                dim_std = np.std(dim_context) + 1e-6
+                dim_std = np.std(dim_context) # + 1e-6
                 
                 # 根据主特征和当前特征的标准差比例调整增强幅度
                 scale_ratio = dim_std / main_std if main_std > 0 else 1.0
@@ -1514,7 +1437,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             ttt_data.append((x_context, x_future, x_mark, y_mark))
             original_sample_indices.append(len(ttt_data) - 1)
             
-            # 应用标准数据增强
+            # # 应用标准数据增强
             # augmented_samples = self._apply_standard_augmentation(
             #     x_context_array, x_future_array, context_len, horizon_len, test_data
             # )
@@ -1539,9 +1462,112 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model = copy.deepcopy(self.base_model)
 
         self.choose_training_parts()
-        self.model_optim = self._select_optimizer()
+        self.model_optim = self._select_optimizer(lr=self.args.ttt_lr)
         self.model_optim.load_state_dict(self.optimizer_status['optimizer_state_dict'])
         
+    def _train_ttt(self, ttt_loader, scaler=None):
+        """执行TTT训练循环
+        
+        Args:
+            ttt_loader: TTT训练数据加载器
+            scaler: 用于混合精度训练的scaler，可选
+            
+        Returns:
+            None
+        """
+        batch_num = len(ttt_loader)
+        criterion = self._select_criterion()
+        
+        for ttt_epoch in range(self.args.ttt_train_epochs):
+            total_loss = 0.0
+            forecast_loss_total = 0.0
+            imputation_loss_total = 0.0
+            self.model.train()
+            for tt_idx, batch in enumerate(ttt_loader):
+                ttt_batch_x, ttt_batch_y, ttt_batch_x_mark, ttt_batch_y_mark = batch
+                self.model_optim.zero_grad()
+                ttt_batch_x = ttt_batch_x.float().to(self.device)
+                ttt_batch_y = ttt_batch_y.float().to(self.device)
+                ttt_batch_x_mark = ttt_batch_x_mark.float().to(self.device)
+                ttt_batch_y_mark = ttt_batch_y_mark.float().to(self.device)
+                
+                ttt_dec_inp = torch.zeros_like(ttt_batch_y).float()
+                ttt_dec_inp = torch.cat([ttt_batch_y[:, :self.args.label_len, :], ttt_dec_inp], dim=1).float().to(self.device)
+                
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        if self.use_multi_task:
+                            B, T, N = ttt_batch_x.shape
+                            mask = torch.rand((B, T, N)).to(self.device)
+                            mask[mask <= self.mask_rate] = 0  # masked
+                            mask[mask > self.mask_rate] = 1  # remained
+                            
+                            forecast_out, imputation_out = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark, mask)
+                            
+                            # 预测任务损失
+                            f_dim = -1 if self.args.features == 'MS' else 0
+                            forecast_out = forecast_out[:, -self.args.pred_len:, f_dim:]
+                            batch_y_pred = ttt_batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                            forecast_loss = criterion(forecast_out, batch_y_pred)
+                            
+                            # 重建任务损失
+                            imputation_out = imputation_out[:, :, f_dim:]
+                            batch_x_imp = ttt_batch_x[:, :, f_dim:]
+                            mask = mask[:, :, f_dim:]
+                            imputation_loss = criterion(imputation_out[mask == 0], batch_x_imp[mask == 0])
+                            
+                            # 总损失
+                            ttt_loss = forecast_loss + self.args.mr_loss_ratio * imputation_loss
+                            forecast_loss_total += forecast_loss.item()
+                            imputation_loss_total += imputation_loss.item()
+                        else:
+                            ttt_outputs = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark)
+                            ttt_loss = criterion(ttt_outputs, ttt_batch_y[:, -self.args.pred_len:, :])
+                else:
+                    if self.use_multi_task:
+                        B, T, N = ttt_batch_x.shape
+                        mask = torch.rand((B, T, N)).to(self.device)
+                        mask[mask <= self.mask_rate] = 0  # masked
+                        mask[mask > self.mask_rate] = 1  # remained
+                        forecast_out, imputation_out = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark, mask)
+                        
+                        # 预测任务损失
+                        f_dim = -1 if self.args.features == 'MS' else 0
+                        forecast_out = forecast_out[:, -self.args.pred_len:, f_dim:]
+                        batch_y_pred = ttt_batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        forecast_loss = criterion(forecast_out, batch_y_pred)
+                        
+                        # 重建任务损失
+                        imputation_out = imputation_out[:, :, f_dim:]
+                        batch_x_imp = ttt_batch_x[:, :, f_dim:]
+                        mask = mask[:, :, f_dim:]
+                        imputation_loss = criterion(imputation_out[mask == 0], batch_x_imp[mask == 0])
+                        
+                        # 总损失
+                        ttt_loss = forecast_loss + self.args.mr_loss_ratio * imputation_loss
+                        forecast_loss_total += forecast_loss.item()
+                        imputation_loss_total += imputation_loss.item()
+                    else:
+                        ttt_outputs = self.model(ttt_batch_x, ttt_batch_x_mark, ttt_dec_inp, ttt_batch_y_mark)
+                        ttt_loss = criterion(ttt_outputs, ttt_batch_y[:, -self.args.pred_len:, :])
+                
+                total_loss += ttt_loss.item()
+                
+                if self.args.use_amp:
+                    scaler.scale(ttt_loss).backward()
+                    scaler.step(self.model_optim)
+                    scaler.update()
+                else:
+                    ttt_loss.backward()
+                    self.model_optim.step()
+
+            if self.use_multi_task:
+                print(f"TTT train epoch: {ttt_epoch+1}/{self.args.ttt_train_epochs}, loss: {total_loss / batch_num:.4f}, forecast_loss: {forecast_loss_total / batch_num:.4f}, imputation_loss: {imputation_loss_total / batch_num:.4f}")
+            else:
+                print(f"TTT train epoch: {ttt_epoch+1}/{self.args.ttt_train_epochs}, loss: {total_loss / batch_num:.4f}")
+
+        self.model.eval()
+
 class TTTDataset(Dataset):
     """自定义TTT训练数据集"""
     def __init__(self, data):
